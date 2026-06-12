@@ -17,6 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONSTRAINTS_CPP = ROOT / "vphysics_jolt" / "vjolt_constraints.cpp"
 VEHICLE_CPP = ROOT / "vphysics_jolt" / "vjolt_controller_vehicle.cpp"
+FLUID_CPP = ROOT / "vphysics_jolt" / "vjolt_controller_fluid.cpp"
 
 
 def replace_once(text: str, old: str, new: str, label: str) -> str:
@@ -68,6 +69,20 @@ def patch_vehicle(text: str) -> str:
     return text
 
 
+def patch_fluid(text: str) -> str:
+    if "vjolt_fluid_buoyancy_scale" not in text:
+        old = "//-------------------------------------------------------------------------------------------------\n\n// Josh: The surfacePlane"
+        new = """//-------------------------------------------------------------------------------------------------\n\nstatic ConVar vjolt_fluid_buoyancy_scale( \"vjolt_fluid_buoyancy_scale\", \"1.0\", FCVAR_NONE,\n\t\"Scales buoyancy impulse strength. Compatibility/tuning aid for heavy objects and water addons.\" );\nstatic ConVar vjolt_fluid_buoyancy_max_ratio( \"vjolt_fluid_buoyancy_max_ratio\", \"1.0\", FCVAR_NONE,\n\t\"Caps Jolt buoyancy ratio. 0 disables the cap; 1 roughly prevents stronger-than-neutral buoyancy.\" );\n\n// Josh: The surfacePlane"""
+        text = replace_once(text, old, new, "fluid buoyancy ConVars")
+
+    old = """\t\tfloat inBuoyancy = flFluidDensity * pObject->GetBody()->GetShape()->GetVolume() * pObject->GetInvMass();\n\t\tif ( body.IsActive() )\n"""
+    new = """\t\tfloat inBuoyancy = flFluidDensity * pObject->GetBody()->GetShape()->GetVolume() * pObject->GetInvMass();\n\t\tinBuoyancy *= vjolt_fluid_buoyancy_scale.GetFloat();\n\n\t\tconst float flMaxBuoyancyRatio = vjolt_fluid_buoyancy_max_ratio.GetFloat();\n\t\tif ( flMaxBuoyancyRatio > 0.0f )\n\t\t\tinBuoyancy = Min( inBuoyancy, flMaxBuoyancyRatio );\n\n\t\tif ( body.IsActive() )\n"""
+    if old in text:
+        text = replace_once(text, old, new, "fluid buoyancy clamp")
+
+    return text
+
+
 def patch_file(path: Path, patcher) -> bool:
     text = path.read_text(encoding="utf-8")
     patched = patcher(text)
@@ -83,13 +98,14 @@ def main() -> None:
     changed = False
     changed |= patch_file(CONSTRAINTS_CPP, patch_constraints)
     changed |= patch_file(VEHICLE_CPP, patch_vehicle)
+    changed |= patch_file(FLUID_CPP, patch_fluid)
 
     if not changed:
         print("No source changes needed.")
         return
 
     print("Review with:")
-    print("  git diff -- vphysics_jolt/vjolt_constraints.cpp vphysics_jolt/vjolt_controller_vehicle.cpp")
+    print("  git diff -- vphysics_jolt/vjolt_constraints.cpp vphysics_jolt/vjolt_controller_vehicle.cpp vphysics_jolt/vjolt_controller_fluid.cpp")
 
 
 if __name__ == "__main__":
